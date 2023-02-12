@@ -23,7 +23,7 @@ type SetPowerRequest struct {
 type SendWaveRequest struct {
 	Channel uint `json:"channel" binding:"required,min=1,max=2"`
 	ParamX  uint `json:"paramX" binding:"required,min=0,max=31"`
-	ParamY  uint `json:"paramY" binding:"required,min=0,max=2047"`
+	ParamY  uint `json:"paramY" binding:"required,min=0,max=1023"`
 	ParamZ  uint `json:"paramZ" binding:"required,min=0,max=31"`
 }
 
