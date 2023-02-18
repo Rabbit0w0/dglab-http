@@ -252,8 +252,11 @@ func main() {
 
 		btr = make([]byte, 3)
 		ab2Chr[0].Read(btr)
-		byteReader := bytes.NewReader(reverseByteArrayBits(btr))
+		byteReader := bytes.NewReader(btr)
 		r := bitstream.NewReader(byteReader, nil)
+		// Dispose first 2 bits
+		r.ReadBool()
+		r.ReadBool()
 		chanAPower, _ = r.ReadNBitsAsUint8(11)
 		chanBPower, _ = r.ReadNBitsAsUint8(11)
 
@@ -273,12 +276,12 @@ func main() {
 		}
 		b := bytes.NewBuffer([]byte{})
 		wr := bitstream.NewWriter(b)
+		wr.WriteBool(false)
+		wr.WriteBool(false)
 		wr.WriteNBitsOfUint16BE(11, uint16(req.PowerA))
 		wr.WriteNBitsOfUint16BE(11, uint16(req.PowerB))
-		wr.WriteBool(false)
-		wr.WriteBool(false)
 		wr.Flush()
-		_, err := ab2Chr[0].WriteWithoutResponse(reverseByteArrayBits(b.Bytes()))
+		_, err := ab2Chr[0].WriteWithoutResponse(b.Bytes()[:2])
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"message":          "bluetooth exception",
@@ -305,20 +308,20 @@ func main() {
 		}
 		b := bytes.NewBuffer([]byte{})
 		wr := bitstream.NewWriter(b)
-		wr.WriteNBitsOfUint8(5, uint8(req.ParamX))
-		wr.WriteNBitsOfUint16BE(10, uint16(req.ParamY))
-		wr.WriteNBitsOfUint8(5, uint8(req.ParamZ))
 		// 20-23 bit
 		wr.WriteBool(false)
 		wr.WriteBool(false)
 		wr.WriteBool(false)
 		wr.WriteBool(false)
+		wr.WriteNBitsOfUint8(5, uint8(req.ParamZ))
+		wr.WriteNBitsOfUint16BE(10, uint16(req.ParamY))
+		wr.WriteNBitsOfUint8(5, uint8(req.ParamX))
 		wr.Flush()
 		err = nil
 		if req.Channel == 1 {
-			_, err = a34Chr[0].WriteWithoutResponse(reverseByteArrayBits(b.Bytes()))
+			_, err = a34Chr[0].WriteWithoutResponse(b.Bytes()[:2])
 		} else {
-			_, err = b34Chr[0].WriteWithoutResponse(reverseByteArrayBits(b.Bytes()))
+			_, err = b34Chr[0].WriteWithoutResponse(b.Bytes()[:2])
 		}
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
