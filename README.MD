@@ -36,6 +36,7 @@ go build ./dglab-http
 
 响应
 - `message` 信息
+- `bluetoothPayload` 蓝牙荷载
 
 ### `/sendWave` - POST
 发送波形数据
@@ -48,6 +49,7 @@ go build ./dglab-http
 
 响应
 - `message` 信息
+- `bluetoothPayload` 蓝牙荷载
 
 ```go
 type SetPowerRequest struct {

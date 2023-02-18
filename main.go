@@ -22,9 +22,9 @@ type SetPowerRequest struct {
 
 type SendWaveRequest struct {
 	Channel uint `json:"channel" binding:"required,min=1,max=2"`
-	ParamX  uint `json:"paramX" binding:"required,min=0,max=31"`
-	ParamY  uint `json:"paramY" binding:"required,min=0,max=1023"`
-	ParamZ  uint `json:"paramZ" binding:"required,min=0,max=31"`
+	ParamX  uint `json:"paramX" binding:"required,max=31"`
+	ParamY  uint `json:"paramY" binding:"required,max=1023"`
+	ParamZ  uint `json:"paramZ" binding:"required,max=31"`
 }
 
 // Functions
@@ -45,15 +45,40 @@ func clamp(a, min, max int) int {
 	return a
 }
 
-func dumpBoolArr(arr []bool) {
+func dumpBoolArr(arr []bool) string {
+	r := ""
 	for i := 0; i < len(arr); i++ {
 		if arr[i] {
-			print(1)
+			r += "1"
 		} else {
-			print(0)
+			r += "0"
 		}
 	}
-	print("\n")
+	return r
+}
+
+func reverseBool(input []bool) []bool {
+	if len(input) == 0 {
+		return input
+	}
+	return append(reverseBool(input[1:]), input[0])
+}
+
+func reverseByteArrayBits(input []byte) []byte {
+	br := bytes.NewReader(input)
+	r := bitstream.NewReader(br, nil)
+	boolList := make([]bool, len(input)*8)
+	for i := 0; i < len(input)*8; i++ {
+		boolList[i], _ = r.ReadBool()
+	}
+	boolList = reverseBool(boolList)
+	b := bytes.NewBuffer([]byte{})
+	nw := bitstream.NewWriter(b)
+	for i := 0; i < len(input)*8; i++ {
+		nw.WriteBool(boolList[i])
+	}
+	nw.Flush()
+	return b.Bytes()
 }
 
 func NewDG16BitUUID(shortUUID uint32) bluetooth.UUID {
@@ -173,7 +198,7 @@ func main() {
 
 	must("enabling battery notification", batteryChr[0].EnableNotifications(func(buf []byte) {
 		fmt.Printf("Battery level: %d\n", buf[0])
-		batteryLevel = clamp(int(buf[0]), 0, 100)
+		batteryLevel = int(buf[0])
 	}))
 
 	// Update current battery level
@@ -196,6 +221,7 @@ func main() {
 		if len(buf) == 0 {
 			return
 		}
+		buf = reverseByteArrayBits(buf)
 		byteReader := bytes.NewReader(buf)
 		r := bitstream.NewReader(byteReader, nil)
 		chanAPower, _ = r.ReadNBitsAsUint8(11)
@@ -220,6 +246,17 @@ func main() {
 
 	r := gin.Default()
 	r.Any("/status", func(c *gin.Context) {
+		btr := make([]byte, 1)
+		batteryChr[0].Read(btr)
+		batteryLevel = int(btr[0])
+
+		btr = make([]byte, 3)
+		ab2Chr[0].Read(btr)
+		byteReader := bytes.NewReader(reverseByteArrayBits(btr))
+		r := bitstream.NewReader(byteReader, nil)
+		chanAPower, _ = r.ReadNBitsAsUint8(11)
+		chanBPower, _ = r.ReadNBitsAsUint8(11)
+
 		c.JSON(200, gin.H{
 			"battery":    batteryLevel,
 			"chanAPower": chanAPower,
@@ -230,27 +267,23 @@ func main() {
 		req := SetPowerRequest{}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"message": "malformed input",
+				"message": fmt.Sprintf("malformed request: %s", err.Error()),
 			})
 			return
 		}
-		var b bytes.Buffer
-		wr := bitstream.NewWriter(&b)
-		tmp := ConvertToBits(req.PowerA, 10)
-		for i := 0; i < 11; i++ {
-			wr.WriteBool(tmp[i])
-		}
-		tmp = ConvertToBits(req.PowerB, 10)
-		for i := 0; i < 11; i++ {
-			wr.WriteBool(tmp[i])
-		}
+		b := bytes.NewBuffer([]byte{})
+		wr := bitstream.NewWriter(b)
+		wr.WriteNBitsOfUint16BE(11, uint16(req.PowerA))
+		wr.WriteNBitsOfUint16BE(11, uint16(req.PowerB))
 		wr.WriteBool(false)
 		wr.WriteBool(false)
-		_, err := ab2Chr[0].WriteWithoutResponse(b.Bytes())
+		wr.Flush()
+		_, err := ab2Chr[0].WriteWithoutResponse(reverseByteArrayBits(b.Bytes()))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"message": "bluetooth exception",
-				"err":     err.Error(),
+				"message":          "bluetooth exception",
+				"bluetoothPayload": fmt.Sprintf("%b", b.Bytes()),
+				"err":              err.Error(),
 			})
 			println(err.Error())
 			return
@@ -258,57 +291,48 @@ func main() {
 		chanAPower = uint8(req.PowerA)
 		chanBPower = uint8(req.PowerB)
 		c.JSON(http.StatusOK, gin.H{
-			"message": "ok",
+			"message":          "ok",
+			"bluetoothPayload": fmt.Sprintf("%b", b.Bytes()),
 		})
 	})
 	r.POST("/sendWave", func(c *gin.Context) {
 		req := SendWaveRequest{}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-				"message": "malformed input",
+				"message": fmt.Sprintf("malformed request: %s", err.Error()),
 			})
 			return
 		}
-		var b bytes.Buffer
-		wr := bitstream.NewWriter(&b)
-		tmp := ConvertToBits(req.ParamX, 4)
-		for i := 0; i < 5; i++ {
-			wr.WriteBool(tmp[i]) // 0-4 bit
-		}
-		tmp = ConvertToBits(req.ParamY, 9)
-		for i := 0; i < 10; i++ {
-			wr.WriteBool(tmp[i]) // 5-14 bit
-		}
-		tmp = ConvertToBits(req.ParamZ, 4)
-		for i := 0; i < 5; i++ {
-			wr.WriteBool(tmp[i]) // 15-19 bit
-		}
+		b := bytes.NewBuffer([]byte{})
+		wr := bitstream.NewWriter(b)
+		wr.WriteNBitsOfUint8(5, uint8(req.ParamX))
+		wr.WriteNBitsOfUint16BE(10, uint16(req.ParamY))
+		wr.WriteNBitsOfUint8(5, uint8(req.ParamZ))
 		// 20-23 bit
 		wr.WriteBool(false)
 		wr.WriteBool(false)
 		wr.WriteBool(false)
 		wr.WriteBool(false)
+		wr.Flush()
 		err = nil
 		if req.Channel == 1 {
-			_, err = a34Chr[0].WriteWithoutResponse(b.Bytes())
+			_, err = a34Chr[0].WriteWithoutResponse(reverseByteArrayBits(b.Bytes()))
 		} else {
-			_, err = b34Chr[0].WriteWithoutResponse(b.Bytes())
+			_, err = b34Chr[0].WriteWithoutResponse(reverseByteArrayBits(b.Bytes()))
 		}
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"message": "bluetooth exception",
-				"err":     err.Error(),
+				"message":          "bluetooth exception",
+				"bluetoothPayload": fmt.Sprintf("%b", b.Bytes()),
+				"err":              err.Error(),
 			})
 			println(err.Error())
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"message": "ok",
+			"message":          "ok",
+			"bluetoothPayload": fmt.Sprintf("%b", b.Bytes()),
 		})
 	})
-	err = r.Run(":8080")
-	if err != nil {
-		println(err)
-		return
-	}
+	_ = r.Run(":8080")
 }
